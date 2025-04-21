@@ -6,7 +6,7 @@ April:
     * Hoofd- en Deelvragen [-]  
     * Plan van aanpak [v]  
     * Vinden bronnen voor theoretisch kader [v]  
-    * LaTeX leren voor schrijven theoretisch kader [ ]  
+    * LaTeX leren voor schrijven theoretisch kader [v]  
   
 Mei  
     - Lezen bronnen  
