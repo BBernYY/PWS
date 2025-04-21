@@ -52,6 +52,10 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+*.aux
+*_latexmk
+*.fls
+*.synctex.gz
 
 # Translations
 *.mo
