@@ -1,51 +1,97 @@
-import math
-import os
-import sys
-import time
-import numpy
 import moderngl
 import pygame
-import random
+import numpy as np
+import time
+import imageio
+from PIL import Image
+import copy
 
-os.environ['SDL_WINDOWS_DPI_AWARENESS'] = 'permonitorv2'
+width, height = 1088, 1088
+rpp = 1
+show_progress = True
+fps = 0.000000001
+lock_fps = True
+length = 3.14159 # seconds
+start_time = 3
+forever = True
+fp = "output.mp4"
 
-WIDTH, HEIGHT = 720, 720
+if show_progress:
+    pygame.init()
+    pygame.display.set_mode((width, height), pygame.OPENGL | pygame.DOUBLEBUF)
+    ctx = moderngl.create_context()
+else:
+    ctx = moderngl.create_standalone_context()
 
-pygame.init()
-pygame.display.set_mode((WIDTH, HEIGHT), flags=pygame.OPENGL | pygame.DOUBLEBUF, vsync=False)
+program = ctx.program(
+    vertex_shader=open("fs_quad.vert", "r").read(),
+    fragment_shader=open("tracer.frag", "r").read(),
+)
+init_time = time.time()
+vao = ctx.vertex_array(program, [])
+accumulator_program = ctx.program(
+    vertex_shader=open("fs_quad.vert", "r").read(),
+    fragment_shader=open("accumulator.frag", "r").read(),
+)
+tracer_tex = ctx.texture((width, height), 4)  # 4 = RGBA channels
+fbo = ctx.framebuffer(tracer_tex)
+accumulator_vao = ctx.vertex_array(accumulator_program, [])
+ping = ctx.texture((width, height), 4, dtype='f4')
+pong = ctx.texture((width, height), 4, dtype='f4')
+fbo_ping = ctx.framebuffer(ping)
+fbo_pong = ctx.framebuffer(pong)
+isPing = True
+tracer_tex.use(2)
+start = time.time()
+if fp:
+    writer = imageio.get_writer(fp, fps=fps, codec='libx264')
+running = True
+if length == 0:
+    length = 1/fps
+t = copy.copy(start_time)
+tu = time.time()
+frames_rendered = 0
+while (t < length+start_time or forever) and running:
+    frameIndex = 0
+    while True:
+        fbo.use()
+        fbo.clear(0.0, 0.0, 0.0, 1.0)
+        program["frameIndex"].value = frameIndex
+        program["t"].value = t
+        vao.render(moderngl.TRIANGLES, vertices=6)
+        ping.use(0)
+        pong.use(1)
+        if isPing:
+            fbo_pong.use()
+            accumulator_program["accumulated"].value = 0
+            isPing = False
+        else:
+            fbo_ping.use()
+            accumulator_program["accumulated"].value = 1
+            isPing = True
+        if show_progress:
+            ctx.copy_framebuffer(ctx.screen, (fbo_ping if isPing else fbo_pong))
+            pygame.display.flip()
+        frames_rendered += 1
+        accumulator_program["frameIndex"].value = frameIndex
 
-frame_index = 0
+        accumulator_program["frame"].value = 2
+        accumulator_vao.render(moderngl.TRIANGLES, vertices=6)
+        if frames_rendered % 1000 == 0:
+            print(f" t = {t:.2f}s, {frameIndex/rpp*100:.0f}% of frame {t*fps:.0f}, fps {((((t-start_time)*fps)/(time.time()-start)) if t-start_time > 0 else 0.0):.2f}, {frames_rendered/(t*fps):.2f} samples per frame")
+        frameIndex += 1
+        dt = 1/fps - (time.time()-tu)
+        if (frameIndex > rpp and not lock_fps) or (dt < 0 and lock_fps):
+            break
+    tu = time.time()
+    t += 1/fps
 
-class Scene:
-    def __init__(self):
-        self.ctx = moderngl.get_context()
-
-        prog = self.ctx.program(
-            vertex_shader=open("shader.vert").read(),
-            fragment_shader=open("shader.frag").read(),
-        )
-
-        self.vao = self.ctx.vertex_array(prog, [])
-        self.vao.vertices = 6  # 6 vertices for 2 triangles forming the quad
-        self.start_time = time.time()
-        self.program = prog
-    def render(self):
-        self.ctx.clear()
-        self.program['frameIndex'].value = frame_index
-        #self.program['wsize'].value = [WIDTH, HEIGHT]
-        self.program['t'].value = (time.time() - self.start_time)*0.1
-        self.vao.render()
-
-
-scene = Scene()
-while True:
-    frame_index += 1
-    print(frame_index, scene.program['t'].value)
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
-
-    scene.render()
-
-    pygame.display.flip()
+    out_fbo = fbo_ping if isPing else fbo_pong
+    if fp:
+        if length == 1/fps:
+            Image.frombytes('RGB', out_fbo.size, out_fbo.read(), 'raw', 'RGB', 0, -1).save(fp)
+        else:    
+            writer.append_data(np.array(Image.frombytes('RGB', out_fbo.size, out_fbo.read(), 'raw', 'RGB', 0, -1)))
+if fp:
+    writer.close()
+# Read from result (accumulator's texture)
