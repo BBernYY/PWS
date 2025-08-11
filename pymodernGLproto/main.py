@@ -4,17 +4,10 @@ import numpy as np
 import time
 import imageio
 from PIL import Image
+import math
 import copy
 
-width, height = 1088, 1088
-rpp = 1
-show_progress = True
-fps = 0.000000001
-lock_fps = True
-length = 3.14159 # seconds
-start_time = 3
-forever = True
-fp = "output.mp4"
+from conf import *
 
 if show_progress:
     pygame.init()
@@ -23,6 +16,9 @@ if show_progress:
 else:
     ctx = moderngl.create_standalone_context()
 
+
+ssbo = ctx.buffer(get_objectlist(start_time))
+ssbo.bind_to_storage_buffer(binding=5)
 program = ctx.program(
     vertex_shader=open("fs_quad.vert", "r").read(),
     fragment_shader=open("tracer.frag", "r").read(),
@@ -54,6 +50,7 @@ frames_rendered = 0
 while (t < length+start_time or forever) and running:
     frameIndex = 0
     while True:
+        ssbo.write(get_objectlist(t))
         fbo.use()
         fbo.clear(0.0, 0.0, 0.0, 1.0)
         program["frameIndex"].value = frameIndex
@@ -77,8 +74,8 @@ while (t < length+start_time or forever) and running:
 
         accumulator_program["frame"].value = 2
         accumulator_vao.render(moderngl.TRIANGLES, vertices=6)
-        if frames_rendered % 1000 == 0:
-            print(f" t = {t:.2f}s, {frameIndex/rpp*100:.0f}% of frame {t*fps:.0f}, fps {((((t-start_time)*fps)/(time.time()-start)) if t-start_time > 0 else 0.0):.2f}, {frames_rendered/(t*fps):.2f} samples per frame")
+        if frames_rendered % 100 == 0:
+            print(f" t = {t:.2f}s, {frameIndex/rpp*100:.0f}% of frame {(t-start_time)*fps:.0f}/{length*fps:.0f}, fps {((((t-start_time)*fps)/(time.time()-start)) if t-start_time > 0 else 0.0):.2f}, {frames_rendered/(t*fps):.2f} samples per frame")
         frameIndex += 1
         dt = 1/fps - (time.time()-tu)
         if (frameIndex > rpp and not lock_fps) or (dt < 0 and lock_fps):
