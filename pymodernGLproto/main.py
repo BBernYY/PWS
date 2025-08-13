@@ -17,8 +17,13 @@ else:
     ctx = moderngl.create_standalone_context()
 
 
-ssbo = ctx.buffer(get_objectlist(start_time))
+ssbo = ctx.buffer(get_ballslist(start_time))
+vertssbo = ctx.buffer(get_facelist(start_time))
+vertssbo.bind_to_storage_buffer(binding=4)
+matssbo = ctx.buffer(get_matlist(start_time))
+matssbo.bind_to_storage_buffer(binding=3)
 ssbo.bind_to_storage_buffer(binding=5)
+print(open("tracer.frag", "r").read())
 program = ctx.program(
     vertex_shader=open("fs_quad.vert", "r").read(),
     fragment_shader=open("tracer.frag", "r").read(),
@@ -50,7 +55,9 @@ frames_rendered = 0
 while (t < length+start_time or forever) and running:
     frameIndex = 0
     while True:
-        ssbo.write(get_objectlist(t))
+        ssbo.write(get_ballslist(t))
+        vertssbo.write(get_facelist(t))
+        matssbo.write(get_matlist(t))
         fbo.use()
         fbo.clear(0.0, 0.0, 0.0, 1.0)
         program["frameIndex"].value = frameIndex
@@ -71,14 +78,20 @@ while (t < length+start_time or forever) and running:
             pygame.display.flip()
         frames_rendered += 1
         accumulator_program["frameIndex"].value = frameIndex
-
         accumulator_program["frame"].value = 2
         accumulator_vao.render(moderngl.TRIANGLES, vertices=6)
         if frames_rendered % 100 == 0:
-            print(f" t = {t:.2f}s, {frameIndex/rpp*100:.0f}% of frame {(t-start_time)*fps:.0f}/{length*fps:.0f}, fps {((((t-start_time)*fps)/(time.time()-start)) if t-start_time > 0 else 0.0):.2f}, {frames_rendered/(t*fps):.2f} samples per frame")
+            print(f" t = {t:.2f}s, {frameIndex/rpp*100:.0f}% of frame {(t-start_time)*fps:.0f}/{length*fps:.0f}, fps {((((t-start_time)*fps)/(time.time()-start)) if t-start_time > 0 else 0.0):.2f}, {frames_rendered/(t*fps+1):.2f} samples per frame")
         frameIndex += 1
         dt = 1/fps - (time.time()-tu)
-        if (frameIndex > rpp and not lock_fps) or (dt < 0 and lock_fps):
+        if frameIndex > rpp and dt > 0 and not supersample:
+            if not lock_fps:
+                break
+            else:
+                time.sleep(dt)
+        if dt < 0 and lock_fps:
+            break
+        if frameIndex > rpp:
             break
     tu = time.time()
     t += 1/fps
