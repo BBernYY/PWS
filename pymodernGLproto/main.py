@@ -60,8 +60,14 @@ while (t < length+start_time or forever) and running:
         matssbo.write(get_matlist(t))
         fbo.use()
         fbo.clear(0.0, 0.0, 0.0, 1.0)
+        fov, cam_pos, cam_dir, cam_up = get_cam(t)
         program["frameIndex"].value = frameIndex
+        program["FOV"].value = fov
+        program["cam_pos"].value = cam_pos
+        program["cam_dir"].value = cam_dir
+        program["cam_up"].value = cam_up
         program["t"].value = t
+        program["randval"].value = np.random.randint(0, 2**32);
         vao.render(moderngl.TRIANGLES, vertices=6)
         ping.use(0)
         pong.use(1)

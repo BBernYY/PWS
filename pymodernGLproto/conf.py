@@ -4,18 +4,25 @@ import trimesh
 import os
 width, height = 720, 720
 MAX_BALLS = 16
-MAX_FACES = 144
+MAX_FACES = 2048
 MAX_MATS = 6
 rpp = 10
 show_progress = True
-fps = 30
+fps = 24
 lock_fps = False
-length = math.pi*2 # seconds
+length = math.pi*1 # seconds
 start_time = 0
 forever = True
 supersample = True
 fp = "output.mp4"
 seed = np.random.randint(0, 2**32)
+def get_cam(t):
+    pos = np.array([0, 1, -1], dtype='f4')
+    direction = np.array([math.sin(0.2*0), 0, math.cos(0.2*0)], dtype='f4')
+    up = np.array([0, 1, 0], dtype='f4')
+    fov = 90
+    return fov, pos, direction, up
+
 def get_ballslist(t):
     t = t * 2
     objectlist = [
@@ -63,38 +70,39 @@ def get_ballslist(t):
     objects = np.vstack([objects, pad_block], dtype='f4')
     return objects.tobytes()
 
-
+def get_random(arr, seed=0):
+    np.random.seed(seed)
+    possies = {}
+    B = []
+    for i in arr:
+        D = [0, 0, 0]
+        for j in range(3):
+            g = str(i[j])
+            if g in possies:
+                D[j] = (possies[g])
+                continue
+            else:
+                possies[g] = np.random.randint(1, 3)
+                D[j] = possies[g]
+                B.append(D)
+    return B
+    C = np.zeros((arr.shape[0],3,4), dtype='f4')
+def add_mat(arr, id):
+    C = np.zeros((arr.shape[0],3,4), dtype='f4')
+    B = np.full((arr.shape[0],3), float(id), dtype='f4')
+    C[:,:,:3] = arr
+    C[:,:,3] = B
+    return C
+mesh = trimesh.load("objects/cube.obj")
+B = get_random(mesh.vertices[mesh.faces], seed=seed)
 def get_facelist(t): # vreselijke implementatie maar geen bottleneck
-    def random_mat(arr, seed=0):
-        np.random.seed(seed)
-        possies = {}
-        B = []
-        for i in arr:
-            D = [0, 0, 0]
-            for j in range(3):
-                g = str(i[j])
-                if g in possies:
-                    D[j] = (possies[g])
-                    continue
-                else:
-                    possies[g] = np.random.randint(1,4)
-                    D[j] = possies[g]
-            B.append(D)
-        C = np.zeros((arr.shape[0],3,4), dtype='f4')
-        C[:,:,:3] = arr
-        C[:,:,3] = B
-        return C
-    def add_to_buffer(verties, fp, id):
-        # mesh = trimesh.creation.torus(1, 0.5, 12, 6)
-        mesh = trimesh.load(fp)
-        mesh.apply_transform(trimesh.transformations.rotation_matrix(t, [1, 0, 0]))
-        mesh.apply_transform(trimesh.transformations.rotation_matrix(t+0.5*math.pi, [0, 1, 0]))
-        mesh.apply_translation((0, 0, 2));
-        arr = mesh.vertices[mesh.faces]
-        
-        return random_mat(arr, seed)
+    # mesh = trimesh.creation.torus(1, 0.5, 12, 6)
+    nu = mesh.copy()
+    nu.apply_transform(trimesh.transformations.rotation_matrix(t, [1, 0, 0]))
+    nu.apply_transform(trimesh.transformations.rotation_matrix(t+0.5*math.pi, [0, 1, 0]))
+    nu.apply_translation((0, 0, 2));
+    arr = add_mat(nu.vertices[mesh.faces], 2)
     facies = np.zeros((MAX_FACES,3,4), dtype='f4')
-    arr = add_to_buffer(facies, "objects/cube.obj", 1)
     facies[0:arr.shape[0]] = arr
     # cube2 = trimesh.load("objects/cube.obj", process=False)
     return facies.flatten().tobytes()

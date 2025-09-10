@@ -5,6 +5,11 @@ in vec2 uv;
 out vec4 fragColor;
 
 uniform float t;
+uniform float FOV;
+uniform vec3 cam_pos;
+uniform vec3 cam_dir;
+uniform vec3 cam_up;
+uniform uint randval;
 
 const int balls_len = 4;
 const int faces_len = 16;
@@ -12,7 +17,7 @@ const int mats_len = 6;
 const int rpp = 10;
 const int MAXBOUNCES = 5;
 
-
+const float PI=3.14159265;
 
 struct Material {
     vec4 color; // r, g, b, emission
@@ -133,7 +138,7 @@ vec3 randomHemisphereDirection(inout uint state, vec3 normal) {
 
     // Cosine-weighted
     float r = sqrt(u1);
-    float theta = 2.0 * 3.14159265 * u2;
+    float theta = 2.0 * PI * u2;
 
     float x = r * cos(theta);
     float y = r * sin(theta);
@@ -151,9 +156,9 @@ vec3 randomHemisphereDirection(inout uint state, vec3 normal) {
 
 vec4 getEnviromentLight(vec3 dir) {
   if (dir.y > -0.2) {
-    return vec4(0.6+0.3*dir.y, 0.5+0.5*dir.y, 0.9+0.1*dir.y, 0.5+0.3*sin(0.2*t));
+    return vec4(0.6+0.3*dir.y, 0.5+0.5*dir.y, 0.9+0.1*dir.y, 1.)*(0.3+0.3*sin(0.2*t));
   } else {
-    return vec4(0.4, 0.4, 0.4, 0.2);
+    return vec4(0.4, 0.4, 0.4, 1.)*(0.3+0.3*sin(0.2*t));
   }
 }
 
@@ -284,6 +289,16 @@ vec3 trace(Line ray, Ball[balls_len] objects, vec4[faces_len][3] faces, inout ui
 
 }
 
+vec3 camdir(vec2 uv, inout uint rngState) {
+    float phi = RandomValue(rngState)*2*PI;
+    uv += 0.001*vec2(cos(phi), sin(phi));
+    vec2 cam_space = vec2(tan((FOV/2/180*PI))*uv.x, tan((FOV/2/180*PI))*uv.y);
+    mat2x3 cam_to_world = mat2x3(
+      cross(cam_up, cam_dir), cam_up
+    );
+    return cam_to_world*cam_space+cam_dir;
+}
+
 
 uint hash2(uvec2 v) {
     v = (v << 13u) ^ v;
@@ -291,7 +306,7 @@ uint hash2(uvec2 v) {
 }
 
 void main() {
-  uint seed = uint(gl_FragCoord.x) * 1973u ^
+  uint seed = randval ^ uint(gl_FragCoord.x) * 1973u ^
             uint(gl_FragCoord.y) * 9277u ^
             (frameIndex * 26699u);
   seed = wang_hash(seed);
@@ -300,11 +315,10 @@ void main() {
 
   vec3 colly = vec3(0.);
   for (int i = 0; i < rpp; i++){
-    vec3 uvdir = vec3(uv, 0.5);
-    Line ray = Line(vec3(0., 1., 0.), normalize(uvdir+0.001*randomHemisphereDirection(rngState, uvdir)));
+    Line ray = Line(cam_pos, camdir(uv, rngState));
     colly = colly + trace(ray, objects, faces, rngState)/rpp;
     //colly = colly + RandomDirection(rngState);
   }
   //gl_FragColor = vec4(vec3(float(frameIndex)/1000.), 1.0+colly.r);
-  fragColor = vec4(colly, 1.+t);
+  fragColor = vec4(colly, 1.+t+frameIndex+FOV+cam_pos+cam_dir.z+randval);
 }
