@@ -7,12 +7,18 @@ out vec4 fragColor;
 uniform float t;
 uniform float FOV;
 uniform vec3 cam_pos;
-uniform vec3 cam_dir;
-uniform vec3 cam_up;
+uniform mat3x3 view;
 uniform uint randval;
+uniform uint frameIndex;
+uniform vec4 envpos;
+uniform vec4 envdir;
+uniform vec4 envfloor;
+uniform float aspect;
+uniform float focus_distance;
+uniform float focus_strength;
 
-const int balls_len = 4;
-const int faces_len = 16;
+const int balls_len = 6;
+const int faces_len = 0;
 const int mats_len = 6;
 const int rpp = 10;
 const int MAXBOUNCES = 5;
@@ -44,42 +50,6 @@ struct CollisionT {
 float fsquare(float f) {
   return f*f;
 }
-// float rand(uint seed) {
-//     seed = (seed ^ 61u) ^ (seed >> 16u);
-//     seed *= 9u;
-//     seed ^= seed >> 4u;
-//     seed *= 0x27d4eb2du;
-//     seed ^= seed >> 15u;
-//     return float(seed) * 2.3283064365387e-10;
-// }
-// https://github.com/riccardoscalco/glsl-pcg-prng/blob/main/index.glsl
-// uint pcg(uint v) {
-// 	uint state = v * uint(747796405) + uint(2891336453);
-// 	uint word = ((state >> ((state >> uint(28)) + uint(4))) ^ state) * uint(277803737);
-// 	return (word >> uint(22)) ^ word;
-// }
-
-// float rand (float p) {
-// 	return float(pcg(uint(p))) / float(uint(0xffffffff));
-// }
-
-// cosine-weighted hemisphere around N, Y-up local space, ChatGPT
-// vec3 cosineHemisphere(uint seed, vec3 N) {
-//     float u1 = rand(seed);
-//     float u2 = rand(seed ^ 0x9e3779b9u);
-
-//     // sample on disk (XZ-plane for Y-up)
-//     float r = sqrt(u1);
-//     float phi = 6.28318530718 * u2;
-//     float x = r * cos(phi);
-//     float z = r * sin(phi);
-//     float y = sqrt(max(0.0, 1.0 - u1)); // "up" in local space is Y
-
-//     // build orthonormal basis with N as 'up'
-//     vec3 T = normalize(abs(N.y) > 0.1 ? vec3(N.z, 0.0, -N.x): vec3(-N.z, 0.0, N.x));
-//     vec3 B = cross(T, N);
-//     return normalize(x * T + z * B + y * N);
-// }
 
 
 vec4 ballcollide(Line l, Ball c) {
@@ -114,10 +84,6 @@ uint wang_hash(uint s) {
     return s;
 }
 
-
-
-
-uniform uint frameIndex;
 uint NextRandom(inout uint state)
 {
   state = state * 747796405u + 2891336453u;
@@ -131,37 +97,15 @@ float RandomValue(inout uint state)
   return float(NextRandom(state)) / 4294967296.0;
 }
 
-// ChatGPT - eindelijk de fix gevonden na ~4 uur
-vec3 randomHemisphereDirection(inout uint state, vec3 normal) {
-    float u1 = RandomValue(state);
-    float u2 = RandomValue(state);
-
-    // Cosine-weighted
-    float r = sqrt(u1);
-    float theta = 2.0 * PI * u2;
-
-    float x = r * cos(theta);
-    float y = r * sin(theta);
-    float z = sqrt(1.0 - u1);
-
-    // Build tangent space basis
-    vec3 up = abs(normal.z) < 0.999 ? vec3(0,0,1) : vec3(1,0,0);
-    vec3 tangent = normalize(cross(up, normal));
-    vec3 bitangent = cross(normal, tangent);
-
-    // Transform to world space
-    return tangent * x + bitangent * y + normal * z;
-}
 
 
 vec4 getEnviromentLight(vec3 dir) {
   if (dir.y > -0.2) {
-    return vec4(0.6+0.3*dir.y, 0.5+0.5*dir.y, 0.9+0.1*dir.y, 1.)*(0.3+0.3*sin(0.2*t));
+    return mix(envpos, envdir, 0.4*dir.y+0.6);
   } else {
-    return vec4(0.4, 0.4, 0.4, 1.)*(0.3+0.3*sin(0.2*t));
+    return envfloor;
   }
 }
-
 struct hitInfo {
     float dist;
     vec3 pos;
@@ -175,7 +119,7 @@ layout(std430, binding = 5) buffer Balls {
     Ball objects[balls_len];
 };
 layout(std430, binding = 4) buffer fbuffer {
-    vec4 faces[faces_len][3];
+    vec4 faces[faces_len+1][3];
 };
 layout(std430, binding = 3) buffer mbuffer {
     Material mats[mats_len];
@@ -214,7 +158,7 @@ vec3 uvmix(vec2 t){
   return vec3(t.x, t.y, 1. - t.x - t.y);
 }
 
-hitInfo getHit(Line newray, Ball[balls_len] objects, vec4[faces_len][3] faces) {
+hitInfo getHit(Line newray, Ball[balls_len] objects, vec4[faces_len+1][3] faces) {
     float chosent = 1e29;
     Ball chosen = Ball(vec4(0.), Material(getEnviromentLight(newray.dir), vec4(0.)));
     float myvert_t = 1e30;
@@ -251,52 +195,158 @@ hitInfo getHit(Line newray, Ball[balls_len] objects, vec4[faces_len][3] faces) {
     if (chosent < myvert_t){
       vec3 pos = chosent*newray.dir + newray.pos;
       vec3 normal = normalize(pos - chosen.pos.xyz);
-      vec3 reflectdir = newray.dir - 2 * dot(newray.dir, normal) * normal;
-    return hitInfo(chosent, pos, normal, newray.dir, reflectdir, chosen.mat);
+      vec3 reflectdir = newray.dir - 2*dot(newray.dir, normal) * normal;
+      return hitInfo(chosent, pos, normal, newray.dir, reflectdir, chosen.mat);
     } else {
       vec3 pos = myvert_t*newray.dir + newray.pos;
       vec3 normal = intfacecol.normal;
-      vec3 reflectdir = newray.dir - 2 * dot(newray.dir, normal) * normal;
+      vec3 reflectdir = newray.dir - 2*dot(newray.dir, normal) * normal;
       vec3 mixy = uvmix(intfacecol.local_uv);
-      Material matty = Material(mixy.x*mats[uint(intface[2].w)].color + mixy.y*mats[uint(intface[1].w)].color + mixy.z*mats[uint(intface[0].w)].color, mixy.x*mats[uint(intface[2].w)].brdf + mixy.y*mats[uint(intface[1].w)].brdf + mixy.z*mats[uint(intface[0].w)].brdf);
+      Material matty = Material(mixy.x*mats[uint(intface[2].w)-1].color + mixy.y*mats[uint(intface[1].w)].color + mixy.z*mats[uint(intface[0].w)-1].color, mixy.x*mats[uint(intface[2].w)-1].brdf + mixy.y*mats[uint(intface[1].w)-1].brdf + mixy.z*mats[uint(intface[0].w)-1].brdf);
       return hitInfo(myvert_t, pos, normal, newray.dir, reflectdir, matty);
     }
 }
 
-
-
-vec3 BRDF(hitInfo hit, Material mat, inout uint rngState) {
-    vec3 diffusedir = randomHemisphereDirection(rngState, hit.normal);
-    float s = mat.brdf.r;
-    return diffusedir*s + normalize(hit.reflectdir)*(1-s);
+vec3 Schlick(vec3 r0, float deg){
+    float exponential = pow(1. - deg, 5.);
+    return r0 + (1. - r0) * exponential;
 }
 
-vec3 trace(Line ray, Ball[balls_len] objects, vec4[faces_len][3] faces, inout uint rngState) {
-    vec3 accum = vec3(0.0);
-    vec3 throughput = vec3(1.0);
+//====================================================================
+// non height-correlated masking-shadowing function is described here:
+float Gmask(vec3 wi, vec3 wo, float a2)
+{
+    float dotNL = wi.y;
+    float dotNV = wo.y;
+
+    float denomA = dotNV * sqrt(a2 + (1. - a2) * dotNL * dotNL);
+    float denomB = dotNL * sqrt(a2 + (1. - a2) * dotNV * dotNV);
+
+    return 2. * dotNL * dotNV / (denomA + denomB);
+}
+
+struct brdf_data {
+  vec3 reflectance;
+  vec3 outdir;
+};
+
+brdf_data BRDF_specular(hitInfo hit, Material mat, mat3x3 M, inout uint rngState) {
+  // https://schuttejoe.github.io/post/ggximportancesamplingpart1/
+  float a = mat.brdf.a;
+  float a2 = a * a;
+  float r1 = RandomValue(rngState);
+  float r2 = RandomValue(rngState);
+  vec3 ind = -hit.indir * M;
+
+
+  vec3 reflectance = vec3(0., 0., 0.);
+  float theta = acos(sqrt((1.0 - r1) / ((a2 - 1.) * r1 + 1.)));
+  float phi = 2*PI*r2;
+  vec3 facetnormal = normalize(vec3(sin(theta)*cos(phi), cos(theta), sin(theta)*(sin(phi))));
+  vec3 outdir = normalize(2. * dot(ind, facetnormal) * facetnormal - ind);
+  float dotwiwm = dot(outdir, facetnormal);
+  if (outdir.y > 0.001 && dotwiwm > 0.001){
+    vec3 F = Schlick(mat.brdf.rgb, dotwiwm);
+    float G = Gmask(outdir, ind, a2);
+    float weight = abs(dot(ind, facetnormal)) / (ind.y * facetnormal.y);
+    reflectance = F*G*weight;
+  }
+  outdir = normalize(outdir * transpose(M));
+
+  return brdf_data(reflectance, outdir);
+}
+
+vec3 randomHemisphereDirection(inout uint rngState){
+  float r1 = RandomValue(rngState);
+  float r2 = RandomValue(rngState);
+  float theta = acos(sqrt(1.0 - r1));
+  float phi = 2*PI*r2;
+  return vec3(sin(theta)*cos(phi), cos(theta), sin(theta)*(sin(phi)));
+}
+
+brdf_data BRDF_diffuse(hitInfo hit, Material mat, mat3x3 M, inout uint rngState) {
+    vec3 diffusedir = randomHemisphereDirection(rngState) * transpose(M);
+    float s = mat.brdf.a;
+    return brdf_data(mat.color.rgb/PI*(1-mat.brdf.rgb), diffusedir);
+}
+
+mat3x3 makeBasis(vec3 n) {
+    vec3 up = vec3(0., 1., 0.);
+    vec3 t = normalize(cross(up, n));
+    vec3 b = cross(n, t);
+    return mat3x3(t, n, b);
+}
+
+
+brdf_data BRDF(hitInfo hit, Material mat, inout uint rngState) {
+    mat3x3 M = makeBasis(hit.normal);
+    brdf_data diffuse = BRDF_diffuse(hit, mat, M, rngState);
+    brdf_data specular = BRDF_specular(hit, mat, M, rngState);
+    float r3 = RandomValue(rngState);
+    if (r3 < 0.5){
+      return diffuse;
+    } else {
+      return specular;
+    }
+}
+
+vec3 trace(Line ray, Ball[balls_len] objects, vec4[faces_len+1][3] faces, inout uint rngState) {
+    vec3 filt = vec3(1.0);
+    vec3 throughput = vec3(0.);
+    brdf_data bibi = brdf_data(vec3(1.), vec3(1.));
     for (int i = 0; i < MAXBOUNCES; i++) {
         hitInfo hit = getHit(ray, objects, faces);
         if (hit.dist > 10000.0) {
-            accum += throughput * getEnviromentLight(ray.dir).rgb;
+            hit.mat.color = getEnviromentLight(hit.reflectdir);
+            hit.mat.brdf.a = 1.;
+        }
+        bibi = BRDF(hit, hit.mat, rngState);
+        filt = filt * bibi.reflectance;
+        throughput = throughput + filt * hit.mat.color.a;
+        if (hit.dist > 10000.0) {
             break;
         }
-        accum += throughput * hit.mat.color.rgb * hit.mat.color.a; // emission term
-        throughput *= hit.mat.color.rgb;
-        vec3 dir = BRDF(hit, hit.mat, rngState);
-        ray = Line(hit.pos + 0.001*hit.normal, dir);
+        vec3 dire = bibi.outdir;
+        ray = Line(hit.pos + 0.01*hit.normal, dire);
     }
-    return accum;
+    
+    return throughput;
+    // return ;
 
 }
 
-vec3 camdir(vec2 uv, inout uint rngState) {
+mat3 rotateX(float angle) {
+    float c = cos(angle);
+    float s = sin(angle);
+
+    // Columns of the matrix
+    return mat3(
+        vec3(1.0, 0.0, 0.0),  // first column
+        vec3(0.0, c, s),       // second column
+        vec3(0.0, -s, c)       // third column
+    );
+}
+mat3 rotateY(float angle) {
+    float c = cos(angle);
+    float s = sin(angle);
+
+    // Columns of the matrix
+    return mat3(
+        vec3(c, 0.0, -s),     // first column
+        vec3(0.0, 1.0, 0.0),  // second column
+        vec3(s, 0.0, c)       // third column
+    );
+}
+Line cam(vec2 uv, inout uint rngState) {
+    float theta = RandomValue(rngState)*2*PI;
+    vec3 ch = focus_strength*vec3(vec2(cos(theta), sin(theta)), 0.);
+    float FOV_radian = FOV/180*PI;
     float phi = RandomValue(rngState)*2*PI;
     uv += 0.001*vec2(cos(phi), sin(phi));
-    vec2 cam_space = vec2(tan((FOV/2/180*PI))*uv.x, tan((FOV/2/180*PI))*uv.y);
-    mat2x3 cam_to_world = mat2x3(
-      cross(cam_up, cam_dir), cam_up
-    );
-    return cam_to_world*cam_space+cam_dir;
+    vec3 cam_space = normalize(vec3(uv.x*FOV_radian, uv.y*FOV_radian*aspect, 1.));
+    vec3 pos = cam_pos + ch*view;
+    cam_space -= ch/focus_distance;
+    return Line(pos, cam_space * view);
 }
 
 
@@ -315,10 +365,10 @@ void main() {
 
   vec3 colly = vec3(0.);
   for (int i = 0; i < rpp; i++){
-    Line ray = Line(cam_pos, camdir(uv, rngState));
+    Line ray = cam(uv, rngState);
     colly = colly + trace(ray, objects, faces, rngState)/rpp;
     //colly = colly + RandomDirection(rngState);
   }
   //gl_FragColor = vec4(vec3(float(frameIndex)/1000.), 1.0+colly.r);
-  fragColor = vec4(colly, 1.+t+frameIndex+FOV+cam_pos+cam_dir.z+randval);
+  fragColor = vec4(colly, 1.+t);
 }
