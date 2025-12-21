@@ -7,7 +7,7 @@ from PIL import Image
 import math
 import copy
 
-from conf_movement import *
+from conf import *
 
 if show_progress:
     pygame.init()
@@ -18,10 +18,8 @@ else:
 
 
 ssbo = ctx.buffer(get_ballslist(start_time))
-vertssbo = ctx.buffer(get_facelist(start_time))
+vertssbo = ctx.buffer(get_facelist_v2(start_time))
 vertssbo.bind_to_storage_buffer(binding=4)
-matssbo = ctx.buffer(get_matlist(start_time))
-matssbo.bind_to_storage_buffer(binding=3)
 ssbo.bind_to_storage_buffer(binding=5)
 program = ctx.program(
     vertex_shader=open("fs_quad.vert", "r").read(),
@@ -33,11 +31,55 @@ accumulator_program = ctx.program(
     vertex_shader=open("fs_quad.vert", "r").read(),
     fragment_shader=open("accumulator.frag", "r").read(),
 )
+
+t = copy.copy(start_time)
+
+frameIndex = 0
+def safe_uniform(val, data):
+    global program, t
+    try:
+        program[val].value = data
+    except KeyError:
+        if t == start_time and frameIndex == 0:
+            print(f"{val} is not used!")
+def accumulator_safe_uniform(val, data):
+    global accumulator_program, t
+    try:
+        accumulator_program[val].value = data
+    except KeyError:
+        if t == start_time and frameIndex == 0:
+            print(f"{val} is not used!")
+
+safe_uniform("albedo_tex", 7)
+safe_uniform("fresnel_tex", 8)
+safe_uniform("ao_tex", 9)
+safe_uniform("displacement_tex", 10)
+safe_uniform("normal_tex", 11)
+safe_uniform("emission_tex", 12)
+
 tracer_tex = ctx.texture((width, height), 4, dtype='f4')  # 4 = RGBA channels
 fbo = ctx.framebuffer(tracer_tex)
 accumulator_vao = ctx.vertex_array(accumulator_program, [])
 ping = ctx.texture((width, height), 4, dtype='f4')
 pong = ctx.texture((width, height), 4, dtype='f4')
+albedo = Image.open('./textures/Albedo.png')
+albedo_tex = ctx.texture(albedo.size, 4, albedo.tobytes())
+albedo_tex.use(7)
+fresnel = Image.open('./textures/Specular.png')
+fresnel_tex = ctx.texture(fresnel.size, 4, fresnel.tobytes())
+fresnel_tex.use(8)
+ao = Image.open('./textures/Occlusion.png')
+ao_tex = ctx.texture(ao.size, 1, ao.tobytes())
+ao_tex.use(9)
+displacement = Image.open('./textures/Displacement.png')
+displacement_tex = ctx.texture(displacement.size, 1, displacement.tobytes())
+displacement_tex.use(10)
+normal = Image.open('./textures/Normals.png')
+normal_tex = ctx.texture(normal.size, 3, normal.tobytes())
+normal_tex.use(11)
+emission = Image.open('./textures/Emission.png')
+emission_tex = ctx.texture(emission.size, 3, emission.tobytes())
+emission_tex.use(12)
 fbo_ping = ctx.framebuffer(ping)
 fbo_pong = ctx.framebuffer(pong)
 isPing = True
@@ -48,41 +90,40 @@ if fp:
 running = True
 if length == 0:
     length = 1/fps
-t = copy.copy(start_time)
 tu = time.time()
 frames_rendered = 0
-
-
 while (t < length+start_time or forever) and running:
     frameIndex = 0
     fov, cam_pos, view = get_cam(t)
     while True:
         stop = False
         ssbo.write(get_ballslist(t))
-        vertssbo.write(get_facelist(t))
-        matssbo.write(get_matlist(t))
+        vertssbo.write(get_facelist_v2(t))
         fbo.use()
         fbo.clear(0.0, 0.0, 0.0, 1.0)
-        program["frameIndex"].value = frameIndex
-        program["FOV"].value = fov
-        program["cam_pos"].value = cam_pos
-        program["view"] = view.T.flatten()
-        program["t"].value = t
-        program["randval"].value = np.random.randint(0, 2**32);
-        program["envpos"].value, program["envdir"], program["envfloor"] = get_environment(t)
-        program["aspect"].value = width/height
-        program["focus_distance"].value = focus_distance
-        program["focus_strength"].value = focus_strength
+        safe_uniform("frameIndex", frameIndex)
+        safe_uniform("FOV", fov)
+        safe_uniform("t", t)
+        safe_uniform("cam_pos", cam_pos)
+        safe_uniform("view", view.T.flatten())
+        safe_uniform("randval", np.random.randint(0, 2**32))
+        envpos_val, envdir_val, envfloor_val = get_environment(t)
+        safe_uniform("envpos", envpos_val)
+        safe_uniform("envdir", envdir_val)
+        safe_uniform("envfloor", envfloor_val)
+        safe_uniform("aspect", width/height)
+        safe_uniform("focus_distance", focus_distance)
+        safe_uniform("focus_strength", focus_strength)
         vao.render(moderngl.TRIANGLES, vertices=6)
         ping.use(0)
         pong.use(1)
         if isPing:
             fbo_pong.use()
-            accumulator_program["accumulated"].value = 0
+            accumulator_safe_uniform("accumulated", 0)
             isPing = False
         else:
             fbo_ping.use()
-            accumulator_program["accumulated"].value = 1
+            accumulator_safe_uniform("accumulated", 1)
             isPing = True
         frames_rendered += 1
         if frames_rendered % 100 == 0:
@@ -94,19 +135,19 @@ while (t < length+start_time or forever) and running:
             stop = True
         if dt < 0 and lock_fps:
             stop = True
-        accumulator_program["frameIndex"].value = frameIndex
-        accumulator_program["frame"].value = 2
+        accumulator_safe_uniform("frameIndex", frameIndex)
+        accumulator_safe_uniform("frame", 2)
         accumulator_program["do_postprocessing"] = stop
         accumulator_program["exposure"] = exposure
         accumulator_vao.render(moderngl.TRIANGLES, vertices=6)
         time.sleep(pause)
         dt = 1/fps - (time.time()-tu)
-        if show_progress and not hide_buildup:
+        if show_progress and frames_rendered%hide_buildup == 0:
             ctx.copy_framebuffer(ctx.screen, (fbo_ping if not isPing else fbo_pong))
             pygame.display.flip()
         if stop:
             fov, cam_pos, view = get_cam(t)
-            if hide_buildup and show_progress:
+            if (not frames_rendered%hide_buildup == 0) and show_progress:
                 ctx.copy_framebuffer(ctx.screen, (fbo_ping if isPing else fbo_pong))
                 pygame.display.flip()
             if lock_fps and dt > 0 and not supersample:
@@ -123,4 +164,3 @@ while (t < length+start_time or forever) and running:
             writer.append_data(np.array(Image.frombytes('RGB', out_fbo.size, out_fbo.read(), 'raw', 'RGB', 0, -1)))
 if fp:
     writer.close()
-# Read from result (accumulator's texture)

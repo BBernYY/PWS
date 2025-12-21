@@ -4,7 +4,6 @@ precision highp float;
 in vec2 uv;
 out vec4 fragColor;
 
-uniform float t;
 uniform float FOV;
 uniform vec3 cam_pos;
 uniform mat3x3 view;
@@ -14,25 +13,37 @@ uniform vec4 envpos;
 uniform vec4 envdir;
 uniform vec4 envfloor;
 uniform float aspect;
+uniform float t;
 uniform float focus_distance;
 uniform float focus_strength;
 
+uniform sampler2D emission_tex;
+uniform sampler2D fresnel_tex;
+uniform sampler2D ao_tex;
+uniform sampler2D displacement_tex;
+uniform sampler2D normal_tex;
+uniform sampler2D albedo_tex;
+
 const int balls_len = 6;
-const int faces_len = 0;
-const int mats_len = 6;
+const int faces_len = 16;
 const int rpp = 10;
 const int MAXBOUNCES = 5;
 
 const float PI=3.14159265;
 
 struct Material {
-    vec4 color; // r, g, b, emission
-    vec4 brdf; // smoothness, None, None, None
+    vec4 color; // r, g, b, transparency
+    vec4 brdf; // fresnel, smoothness
+    float ao;
+    float displacement;
+    vec3 normal;
+    vec3 emission;
 };
+
 
 struct Ball {
   vec4 pos; // x, y, z, r
-  Material mat;
+  vec4 matpos;
 };
 
 
@@ -54,7 +65,7 @@ float fsquare(float f) {
 
 vec4 ballcollide(Line l, Ball c) {
   float doCollide = fsquare(2.0 * dot(l.pos - c.pos.xyz, l.dir)) - 4.0 * dot(l.dir, l.dir) * (dot(l.pos - c.pos.xyz, l.pos - c.pos.xyz) - fsquare(c.pos.w));
-  return vec4(c.mat.color.rgb, doCollide);
+  return vec4(doCollide);
 }
 
 CollisionT ballcollision(Line l, Ball c) {
@@ -106,6 +117,17 @@ vec4 getEnviromentLight(vec3 dir) {
     return envfloor;
   }
 }
+
+struct Vert {
+  vec3 pos;
+  vec2 uv_coord;
+};
+
+struct Face {
+  Vert verts[3];
+  float exists;
+};
+
 struct hitInfo {
     float dist;
     vec3 pos;
@@ -113,17 +135,19 @@ struct hitInfo {
     vec3 indir;
     vec3 reflectdir;
     Material mat;
+    vec3 ta;
 };
 
 layout(std430, binding = 5) buffer Balls {
-    Ball objects[balls_len];
+    Ball balls[balls_len];
 };
 layout(std430, binding = 4) buffer fbuffer {
-    vec4 faces[faces_len+1][3];
+    vec4 faces_data[faces_len+1][4];
 };
-layout(std430, binding = 3) buffer mbuffer {
-    Material mats[mats_len];
-};
+
+Face to_face(vec4 f[4]){
+    return Face(Vert[3](Vert(f[0].xyz, vec2(f[0].w, f[1].x)), Vert(f[1].yzw, f[2].xy), Vert(vec3(f[2].zw, f[3].x), f[3].yz)), f[3].w);
+}
 
 struct collision_data {
     float t;
@@ -134,19 +158,19 @@ struct collision_data {
 
 
 // own derivation, until w1 and w2
-collision_data collide(Line l, vec4 face[3]){
-    vec3 dir1 = (face[2].xyz - face[0].xyz);
-    vec3 dir2 = (face[1].xyz - face[0].xyz);
+collision_data collide(Line l, Face face){
+    vec3 dir1 = (face.verts[2].pos - face.verts[0].pos);
+    vec3 dir2 = (face.verts[1].pos - face.verts[0].pos);
     
     vec3 normal = normalize(-cross(dir1, dir2));
     // if (dot(normal, l.dir) > 0) return collision_data(-1., vec2(0.), vec3(0.));
-    float d = -dot(normal, face[0].xyz);
+    float d = -dot(normal, face.verts[0].pos);
     float hit_t = -(dot(normal, l.pos)+d)/dot(normal, l.dir);
     vec3 hit_pos = l.pos+l.dir*hit_t;
     mat3x3 M = mat3x3(
       dir1, dir2, normal
       );
-    vec2 hit_pos_prime = (inverse(M) * (hit_pos - face[0].xyz)).xy;
+    vec2 hit_pos_prime = (inverse(M) * (hit_pos - face.verts[0].pos)).xy;
     if(hit_pos_prime.x > 0 && hit_pos_prime.y > 0 && hit_pos_prime.x + hit_pos_prime.y < 1) {
         return collision_data(hit_t, vec2(hit_pos_prime.x, hit_pos_prime.y), normal);
     } else {
@@ -154,19 +178,52 @@ collision_data collide(Line l, vec4 face[3]){
     }
 }
 
+
+
+vec2 dirToPolar(vec3 v) {
+    float theta = atan(v.z, v.x);
+    float phi = acos(clamp(v.y, -1.0, 1.0));
+    return vec2(theta, phi);
+}
+
 vec3 uvmix(vec2 t){
   return vec3(t.x, t.y, 1. - t.x - t.y);
 }
 
-hitInfo getHit(Line newray, Ball[balls_len] objects, vec4[faces_len+1][3] faces) {
+Material sample_tex(vec2 uv){
+  vec4 albedo = vec4(texture(albedo_tex, uv).rgba);
+  vec4 fresnel = texture(fresnel_tex, uv).rgba;
+  fresnel = vec4(fresnel.rgb, 1.-fresnel.a);
+  float ao = texture(ao_tex, uv).r;
+  float displacement = texture(displacement_tex, uv).r;
+  vec3 normal = texture(normal_tex, uv).rbg;
+  vec3 emission = texture(emission_tex, uv).rgb;
+  emission *= (1/(1-emission) - 1);
+  normal = normalize(2.*normal-1.);
+
+  
+  return Material(albedo, fresnel, ao, displacement, normal, emission);
+}
+
+Material get_uv(Face face, vec3 imgpos){
+  mat3x2 posmat = mat3x2(
+    face.verts[2].uv_coord,
+    face.verts[1].uv_coord,
+    face.verts[0].uv_coord
+  );
+  return sample_tex(posmat * imgpos);
+}
+
+
+hitInfo getHit(Line newray, Ball[balls_len] objects, Face[faces_len+1] faces) {
     float chosent = 1e29;
-    Ball chosen = Ball(vec4(0.), Material(getEnviromentLight(newray.dir), vec4(0.)));
+    Ball chosen = Ball(vec4(0.), vec4(0.));
     float myvert_t = 1e30;
     collision_data intfacecol;
-    vec4 intface[3] = vec4[](vec4(0.), vec4(0.), vec4(0.));
+    Face intface = Face(Vert[3](Vert(vec3(0.), vec2(0.)), Vert(vec3(0.), vec2(0.)), Vert(vec3(0.), vec2(0.))), 0.);
     for(int face_index = 0; face_index < faces_len; face_index++){
-      vec4 face[3] = faces[face_index];
-      if (face[0].w == 0.) continue;
+      Face face = faces[face_index];
+      if (face.exists == 0) continue;
       collision_data facecol = collide(newray, face);
       if (facecol.t < 0) continue;
       if (facecol.t > 1000) continue;
@@ -196,14 +253,20 @@ hitInfo getHit(Line newray, Ball[balls_len] objects, vec4[faces_len+1][3] faces)
       vec3 pos = chosent*newray.dir + newray.pos;
       vec3 normal = normalize(pos - chosen.pos.xyz);
       vec3 reflectdir = newray.dir - 2*dot(newray.dir, normal) * normal;
-      return hitInfo(chosent, pos, normal, newray.dir, reflectdir, chosen.mat);
+      vec3 ta = vec3(normal.z, normal.y, -normal.x);
+      vec2 thetaphi = dirToPolar(normal);
+      float x = mod(thetaphi.x*chosen.pos.w, 1.);
+      float y = mod((0.5*PI-thetaphi.y)*chosen.pos.w, 1.);
+      Material matty = sample_tex(chosen.matpos.xy);
+      return hitInfo(chosent, pos, normal, newray.dir, reflectdir, matty, ta);
     } else {
       vec3 pos = myvert_t*newray.dir + newray.pos;
       vec3 normal = intfacecol.normal;
       vec3 reflectdir = newray.dir - 2*dot(newray.dir, normal) * normal;
       vec3 mixy = uvmix(intfacecol.local_uv);
-      Material matty = Material(mixy.x*mats[uint(intface[2].w)-1].color + mixy.y*mats[uint(intface[1].w)].color + mixy.z*mats[uint(intface[0].w)-1].color, mixy.x*mats[uint(intface[2].w)-1].brdf + mixy.y*mats[uint(intface[1].w)-1].brdf + mixy.z*mats[uint(intface[0].w)-1].brdf);
-      return hitInfo(myvert_t, pos, normal, newray.dir, reflectdir, matty);
+      Material matty = get_uv(intface, uvmix(intfacecol.local_uv));
+      vec3 ta = normalize(intface.verts[2].pos - intface.verts[0].pos);
+      return hitInfo(myvert_t, pos, normal, newray.dir, reflectdir, matty, ta);
     }
 }
 
@@ -290,19 +353,21 @@ brdf_data BRDF(hitInfo hit, Material mat, inout uint rngState) {
     }
 }
 
-vec3 trace(Line ray, Ball[balls_len] objects, vec4[faces_len+1][3] faces, inout uint rngState) {
+vec3 trace(Line ray, Ball[balls_len] objects, Face[faces_len+1] faces, inout uint rngState) {
     vec3 filt = vec3(1.0);
     vec3 throughput = vec3(0.);
     brdf_data bibi = brdf_data(vec3(1.), vec3(1.));
     for (int i = 0; i < MAXBOUNCES; i++) {
         hitInfo hit = getHit(ray, objects, faces);
         if (hit.dist > 10000.0) {
-            hit.mat.color = getEnviromentLight(hit.reflectdir);
             hit.mat.brdf.a = 1.;
+            hit.mat.emission = 0.01*vec3(getEnviromentLight(hit.reflectdir).a);
+            filt = filt * getEnviromentLight(hit.reflectdir).rgb;
+        } else {
+          bibi = BRDF(hit, hit.mat, rngState);
+          filt = filt * bibi.reflectance;
         }
-        bibi = BRDF(hit, hit.mat, rngState);
-        filt = filt * bibi.reflectance;
-        throughput = throughput + filt * hit.mat.color.a;
+        throughput = throughput + filt * hit.mat.emission;
         if (hit.dist > 10000.0) {
             break;
         }
@@ -362,13 +427,17 @@ void main() {
   seed = wang_hash(seed);
 
   uint rngState = seed;
-
+  Face faces[faces_len+1];
+  for (int i = 0; i < faces_len+1; i++){
+      faces[i] = to_face(faces_data[i]);
+  }
   vec3 colly = vec3(0.);
   for (int i = 0; i < rpp; i++){
     Line ray = cam(uv, rngState);
-    colly = colly + trace(ray, objects, faces, rngState)/rpp;
+    colly = colly + trace(ray, balls, faces, rngState)/rpp;
     //colly = colly + RandomDirection(rngState);
   }
-  //gl_FragColor = vec4(vec3(float(frameIndex)/1000.), 1.0+colly.r);
+  // gl_FragColor = vec4(vec3(float(frameIndex)/1000.), 1.0+colly.r);
   fragColor = vec4(colly, 1.+t);
+  // fragColor = vec4(texture(emission_tex, balls[0].matpos.xy+uv*0.01).rgb, 1.);
 }

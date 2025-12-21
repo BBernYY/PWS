@@ -10,9 +10,9 @@ rpp = 100
 show_progress = True
 fps = 24
 lock_fps = False
-length = math.pi*10 # seconds
+length = math.pi*1 # seconds
 start_time = 0
-forever = False
+forever = True
 supersample = False
 hide_buildup = True
 exposure = 0.9
@@ -21,20 +21,22 @@ focus_strength = 0.001
 pause = 0
 fp = "output.mp4"
 seed = np.random.randint(0, 2**32)
+import movement
+movement.update(0)
+mpos, mview = movement.pos, movement.view
+movement.pos = np.array([3.0, 2.0, 3.0])
 def get_cam(t):
-    pos = np.array([0, 1, -1], dtype='f4')
-    direction = np.array([math.sin(0.2*0), 0, math.cos(0.2*0)], dtype='f4')
-    up = np.array([0, 1, 0], dtype='f4')
-    right = np.cross(direction, up)
     fov = 90
-    return fov, pos, np.array([right, up, direction])
+    movement.update(1/fps)
+    return fov, mpos, mview
 
 def get_ballslist(t):
     t = t * 2
     objectlist = [
         # subject 1
         [
-            [3*math.cos(0.2*t), 2.0-2*math.cos(0.2*t), 3+2*math.sin(0.2*t), 0.5],  # x, y, z, radius
+            # [3*math.cos(0.2*t), 2.0-2*math.cos(0.2*t), 3+2*math.sin(0.2*t), 0.5],  # x, y, z, radius
+            [*movement.pos, 0.5],
             [0.2, 0.2, 0.2, 100],  # color (r,g,b), emission
             [0.2, 0.2, 0.2, 1.0],  # smoothness, padding...
         ],
