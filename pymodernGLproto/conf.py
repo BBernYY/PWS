@@ -94,17 +94,30 @@ def add_mat(arr, id):
     C[:,:,:3] = arr
     C[:,:,3] = B
     return C
-mesh = trimesh.load("objects/cube.obj")
+mesh = trimesh.load("objects/brick_cube.obj")
+mesh2 = trimesh.load("objects/metal_cube.obj")
 def get_facelist_v2(t):
     nu = mesh.copy()
     nu.apply_transform(trimesh.transformations.rotation_matrix(t+0.5*math.pi, [1, 0, 0]))
     nu.apply_transform(trimesh.transformations.rotation_matrix(t, [0, 1, 0]))
-    nu.apply_translation((0, 0, 2));
-    objs = [nu]
+    nu.apply_translation((0, 0, 2))
+    nu2 = mesh2.copy()
+    nu2.apply_transform(trimesh.transformations.rotation_matrix(t, [1, 0, 0]))
+    nu2.apply_transform(trimesh.transformations.rotation_matrix(t+0.5*math.pi, [0, 1, 0]))
+    nu2.apply_translation((0, 2, 2))
+    objs = [nu, nu2]
     faces = []
-    for i in objs:
-        faces.append(get_facelist_mesh(i))
-    return np.array([faces], dtype='f4').flatten().tobytes()
+    bounds = []
+    bindex = []
+    for i in range(len(objs)):
+        dat = get_facelist_mesh(objs[i])
+        start = len(faces)//16
+        end = start+len(dat)//16
+        faces.extend(dat)
+        bbverts = objs[i].bounding_box.vertices
+        bounds.append([*objs[i].bounds[0], 0, *objs[i].bounds[1], 0])
+        bindex.extend([[i, ind] for ind in range(start,end)])
+    return np.array(faces, dtype='f4').tobytes(), np.array(bounds, dtype='f4').flatten().tobytes(), np.array(bindex, dtype='int32').flatten().tobytes()
 def get_facelist_mesh(obj):
     faces = np.array([])
     for i in obj.faces:
@@ -118,3 +131,4 @@ def get_environment(t):
     return np.array([0.6, 0.6, 0.9, 0.2-0.1*math.sin(t)], dtype='f4'), np.array([0.8, 0.8, 1.0, 0.5-0.2*math.sin(t)], dtype='f4'), np.array([0.2, 0.2, 0.2, 0.5-0.5*math.sin(t)], dtype='f4')
 # def get_environment(t):
 #     return np.zeros((3,4), dtype='f4')
+get_facelist_v2(0)

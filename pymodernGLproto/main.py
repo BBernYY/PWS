@@ -18,9 +18,14 @@ else:
 
 
 ssbo = ctx.buffer(get_ballslist(start_time))
-vertssbo = ctx.buffer(get_facelist_v2(start_time))
-vertssbo.bind_to_storage_buffer(binding=4)
-ssbo.bind_to_storage_buffer(binding=5)
+verty, bbs, bindices = get_facelist_v2(start_time)
+vertssbo = ctx.buffer(verty)
+bbssbo = ctx.buffer(bbs)
+bindssbo = ctx.buffer(bindices)
+ssbo.bind_to_storage_buffer(binding=9)
+vertssbo.bind_to_storage_buffer(binding=10)
+bbssbo.bind_to_storage_buffer(binding=11)
+bindssbo.bind_to_storage_buffer(binding=12)
 program = ctx.program(
     vertex_shader=open("fs_quad.vert", "r").read(),
     fragment_shader=open("tracer.frag", "r").read(),
@@ -50,12 +55,12 @@ def accumulator_safe_uniform(val, data):
         if t == start_time and frameIndex == 0:
             print(f"{val} is not used!")
 
-safe_uniform("albedo_tex", 7)
-safe_uniform("fresnel_tex", 8)
-safe_uniform("ao_tex", 9)
-safe_uniform("displacement_tex", 10)
-safe_uniform("normal_tex", 11)
-safe_uniform("emission_tex", 12)
+safe_uniform("albedo_tex", 3)
+safe_uniform("fresnel_tex", 4)
+safe_uniform("ao_tex", 5)
+safe_uniform("displacement_tex", 6)
+safe_uniform("normal_tex", 7)
+safe_uniform("emission_tex", 8)
 
 tracer_tex = ctx.texture((width, height), 4, dtype='f4')  # 4 = RGBA channels
 fbo = ctx.framebuffer(tracer_tex)
@@ -64,22 +69,22 @@ ping = ctx.texture((width, height), 4, dtype='f4')
 pong = ctx.texture((width, height), 4, dtype='f4')
 albedo = Image.open('./textures/Albedo.png')
 albedo_tex = ctx.texture(albedo.size, 4, albedo.tobytes())
-albedo_tex.use(7)
+albedo_tex.use(3)
 fresnel = Image.open('./textures/Specular.png')
 fresnel_tex = ctx.texture(fresnel.size, 4, fresnel.tobytes())
-fresnel_tex.use(8)
+fresnel_tex.use(4)
 ao = Image.open('./textures/Occlusion.png')
 ao_tex = ctx.texture(ao.size, 1, ao.tobytes())
-ao_tex.use(9)
+ao_tex.use(5)
 displacement = Image.open('./textures/Displacement.png')
 displacement_tex = ctx.texture(displacement.size, 1, displacement.tobytes())
-displacement_tex.use(10)
+displacement_tex.use(6)
 normal = Image.open('./textures/Normals.png')
 normal_tex = ctx.texture(normal.size, 3, normal.tobytes())
-normal_tex.use(11)
+normal_tex.use(7)
 emission = Image.open('./textures/Emission.png')
 emission_tex = ctx.texture(emission.size, 3, emission.tobytes())
-emission_tex.use(12)
+emission_tex.use(8)
 fbo_ping = ctx.framebuffer(ping)
 fbo_pong = ctx.framebuffer(pong)
 isPing = True
@@ -98,7 +103,10 @@ while (t < length+start_time or forever) and running:
     while True:
         stop = False
         ssbo.write(get_ballslist(t))
-        vertssbo.write(get_facelist_v2(t))
+        verty, bbs, bindices = get_facelist_v2(t)
+        vertssbo.write(verty)
+        bbssbo.write(bbs)
+        bindssbo.write(bindices)
         fbo.use()
         fbo.clear(0.0, 0.0, 0.0, 1.0)
         safe_uniform("frameIndex", frameIndex)

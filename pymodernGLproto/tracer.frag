@@ -25,9 +25,11 @@ uniform sampler2D normal_tex;
 uniform sampler2D albedo_tex;
 
 const int balls_len = 6;
-const int faces_len = 16;
+const int faces_len = 32;
 const int rpp = 10;
 const int MAXBOUNCES = 5;
+const int bbs_len = 2;
+const int bindex_len = 24;
 
 const float PI=3.14159265;
 
@@ -137,12 +139,22 @@ struct hitInfo {
     Material mat;
     vec3 ta;
 };
+struct Box {
+  vec4 c1;
+  vec4 c2;
+};
 
-layout(std430, binding = 5) buffer Balls {
+layout(std430, binding = 9) buffer Balls {
     Ball balls[balls_len];
 };
-layout(std430, binding = 4) buffer fbuffer {
+layout(std430, binding = 10) buffer fbuffer {
     vec4 faces_data[faces_len+1][4];
+};
+layout(std430, binding = 11) buffer bbbuffer {
+    Box bbs[bbs_len];
+};
+layout(std430, binding = 12) buffer bindexbuffer {
+    ivec2 bindices[bindex_len];
 };
 
 Face to_face(vec4 f[4]){
@@ -155,6 +167,25 @@ struct collision_data {
     vec3 normal;
 };
 
+float boxcollide(Line l, Box b)
+{
+    vec3 invDir = 1.0 / l.dir;
+
+    vec3 t0 = (b.c1.xyz - l.pos) * invDir;
+    vec3 t1 = (b.c2.xyz - l.pos) * invDir;
+
+    vec3 tmin = min(t0, t1);
+    vec3 tmax = max(t0, t1);
+
+    float tenter = max(max(tmin.x, tmin.y), tmin.z);
+    float texit  = min(min(tmax.x, tmax.y), tmax.z);
+
+    if (texit >= max(tenter, 0.0)) {
+        return tenter; // overlap length
+    }
+
+    return -1.0;
+}
 
 
 // own derivation, until w1 and w2
@@ -221,18 +252,22 @@ hitInfo getHit(Line newray, Ball[balls_len] objects, Face[faces_len+1] faces) {
     float myvert_t = 1e30;
     collision_data intfacecol;
     Face intface = Face(Vert[3](Vert(vec3(0.), vec2(0.)), Vert(vec3(0.), vec2(0.)), Vert(vec3(0.), vec2(0.))), 0.);
-    for(int face_index = 0; face_index < faces_len; face_index++){
-      Face face = faces[face_index];
-      if (face.exists == 0) continue;
-      collision_data facecol = collide(newray, face);
-      if (facecol.t < 0) continue;
-      if (facecol.t > 1000) continue;
-      if (facecol.t < myvert_t) {
-        intface = face;
-        intfacecol = facecol;
-        myvert_t = facecol.t;
-      }
-
+    for(int bindex_index = 0; bindex_index < bindex_len; bindex_index++){
+        int boxIndex = bindices[bindex_index].x;
+        Box box = bbs[boxIndex];
+        float ins = boxcollide(newray, box);
+        if(ins > -1000000000000.){
+          Face face = faces[bindices[bindex_index].y];
+          if (face.exists == 0) continue;
+          collision_data facecol = collide(newray, face);
+          if (facecol.t < 0) continue;
+          if (facecol.t > 1000) continue;
+          if (facecol.t < myvert_t) {
+            intface = face;
+            intfacecol = facecol;
+            myvert_t = facecol.t;
+            }
+        }
     }
     for (int object_index = 0; object_index < balls_len; object_index++){
         
@@ -439,5 +474,8 @@ void main() {
   }
   // gl_FragColor = vec4(vec3(float(frameIndex)/1000.), 1.0+colly.r);
   fragColor = vec4(colly, 1.+t);
+  // balls[6] = Ball(vec4(bbs[0].c1.xyz, 1.), balls[0].matpos);
+  // balls[7] = Ball(vec4(bbs[0].c2.xyz, 1.), balls[0].matpos);
+  // fragColor = vec4(vec3(boxcollide(cam(uv, rngState), bbs[1]))*0.01+colly*0.5, 1.);
   // fragColor = vec4(texture(emission_tex, balls[0].matpos.xy+uv*0.01).rgb, 1.);
 }
