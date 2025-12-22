@@ -13,6 +13,7 @@ uniform vec4 envpos;
 uniform vec4 envdir;
 uniform vec4 envfloor;
 uniform float aspect;
+uniform float h;
 uniform float t;
 uniform float focus_distance;
 uniform float focus_strength;
@@ -26,7 +27,7 @@ uniform sampler2D albedo_tex;
 
 const int balls_len = 6;
 const int faces_len = 32;
-const int rpp = 10;
+const int rpp = 1;
 const int MAXBOUNCES = 5;
 const int bbs_len = 2;
 const int bindex_len = 24;
@@ -45,7 +46,7 @@ struct Material {
 
 struct Ball {
   vec4 pos; // x, y, z, r
-  vec4 matpos;
+  mat2x2 matpos;
 };
 
 
@@ -221,14 +222,14 @@ vec3 uvmix(vec2 t){
   return vec3(t.x, t.y, 1. - t.x - t.y);
 }
 
-Material sample_tex(vec2 uv){
-  vec4 albedo = vec4(texture(albedo_tex, uv).rgba);
-  vec4 fresnel = texture(fresnel_tex, uv).rgba;
+Material sample_tex(vec2 uv, vec2 dx, vec2 dy){
+  vec4 albedo = vec4(textureGrad(albedo_tex, uv, dx, dy).rgba);
+  vec4 fresnel = textureGrad(fresnel_tex, uv, dx, dy).rgba;
   fresnel = vec4(fresnel.rgb, 1.-fresnel.a);
-  float ao = texture(ao_tex, uv).r;
-  float displacement = texture(displacement_tex, uv).r;
-  vec3 normal = texture(normal_tex, uv).rbg;
-  vec3 emission = texture(emission_tex, uv).rgb;
+  float ao = textureGrad(ao_tex, uv, dx, dy).r;
+  float displacement = textureGrad(displacement_tex, uv, dx, dy).r;
+  vec3 normal = textureGrad(normal_tex, uv, dx, dy).rbg;
+  vec3 emission = textureGrad(emission_tex, uv, dx, dy).rgb;
   emission *= (1/(1-emission) - 1);
   normal = normalize(2.*normal-1.);
 
@@ -236,19 +237,21 @@ Material sample_tex(vec2 uv){
   return Material(albedo, fresnel, ao, displacement, normal, emission);
 }
 
-Material get_uv(Face face, vec3 imgpos){
-  mat3x2 posmat = mat3x2(
-    face.verts[2].uv_coord,
-    face.verts[1].uv_coord,
-    face.verts[0].uv_coord
-  );
-  return sample_tex(posmat * imgpos);
+Material get_uv(mat3x2 posmat, vec3 imgpos, vec2 dx, vec2 dy){
+  dx *= posmat[0] - posmat[2];
+  dy *= posmat[1] - posmat[2];
+  return sample_tex(posmat * imgpos, dx, dy);
 }
+Material get_square_uv(mat2x2 posmat, vec2 imgpos, vec2 dx, vec2 dy){
+  dx *= posmat[1].x-posmat[0].x;
+  dy *= posmat[1].y-posmat[0].y;
 
+  return sample_tex(vec2(posmat[0]+imgpos*(posmat[1]-posmat[0])), dx, dy);
+}
 
 hitInfo getHit(Line newray, Ball[balls_len] objects, Face[faces_len+1] faces) {
     float chosent = 1e29;
-    Ball chosen = Ball(vec4(0.), vec4(0.));
+    Ball chosen = Ball(vec4(0.), mat2x2(0.));
     float myvert_t = 1e30;
     collision_data intfacecol;
     Face intface = Face(Vert[3](Vert(vec3(0.), vec2(0.)), Vert(vec3(0.), vec2(0.)), Vert(vec3(0.), vec2(0.))), 0.);
@@ -292,14 +295,22 @@ hitInfo getHit(Line newray, Ball[balls_len] objects, Face[faces_len+1] faces) {
       vec2 thetaphi = dirToPolar(normal);
       float x = mod(thetaphi.x*chosen.pos.w, 1.);
       float y = mod((0.5*PI-thetaphi.y)*chosen.pos.w, 1.);
-      Material matty = sample_tex(chosen.matpos.xy);
+      vec2 dx = vec2(1.0 / h / aspect, 0.0);
+      vec2 dy = vec2(0.0, 1.0 / h);
+      Material matty = get_square_uv(chosen.matpos, vec2(x,y), dx, dy);
       return hitInfo(chosent, pos, normal, newray.dir, reflectdir, matty, ta);
     } else {
       vec3 pos = myvert_t*newray.dir + newray.pos;
       vec3 normal = intfacecol.normal;
       vec3 reflectdir = newray.dir - 2*dot(newray.dir, normal) * normal;
-      vec3 mixy = uvmix(intfacecol.local_uv);
-      Material matty = get_uv(intface, uvmix(intfacecol.local_uv));
+      vec2 dx = vec2(1.0 / h / aspect, 0.0);
+      vec2 dy = vec2(0.0, 1.0 / h);
+      mat3x2 posmat = mat3x2(
+        intface.verts[2].uv_coord,
+        intface.verts[1].uv_coord,
+        intface.verts[0].uv_coord
+      );
+      Material matty = get_uv(posmat, uvmix(intfacecol.local_uv), dx, dy);
       vec3 ta = normalize(intface.verts[2].pos - intface.verts[0].pos);
       return hitInfo(myvert_t, pos, normal, newray.dir, reflectdir, matty, ta);
     }
@@ -343,7 +354,7 @@ brdf_data BRDF_specular(hitInfo hit, Material mat, mat3x3 M, inout uint rngState
   vec3 facetnormal = normalize(vec3(sin(theta)*cos(phi), cos(theta), sin(theta)*(sin(phi))));
   vec3 outdir = normalize(2. * dot(ind, facetnormal) * facetnormal - ind);
   float dotwiwm = dot(outdir, facetnormal);
-  if (outdir.y > 0.001 && dotwiwm > 0.001){
+  if (outdir.y > 0.0001 && dotwiwm > 0.0001){
     vec3 F = Schlick(mat.brdf.rgb, dotwiwm);
     float G = Gmask(outdir, ind, a2);
     float weight = abs(dot(ind, facetnormal)) / (ind.y * facetnormal.y);
@@ -365,7 +376,7 @@ vec3 randomHemisphereDirection(inout uint rngState){
 brdf_data BRDF_diffuse(hitInfo hit, Material mat, mat3x3 M, inout uint rngState) {
     vec3 diffusedir = randomHemisphereDirection(rngState) * transpose(M);
     float s = mat.brdf.a;
-    return brdf_data(mat.color.rgb/PI*(1-mat.brdf.rgb), diffusedir);
+    return brdf_data(mat.color.rgb*mat.ao/PI*(1-mat.brdf.rgb), diffusedir);
 }
 
 mat3x3 makeBasis(vec3 n) {
@@ -396,7 +407,7 @@ vec3 trace(Line ray, Ball[balls_len] objects, Face[faces_len+1] faces, inout uin
         hitInfo hit = getHit(ray, objects, faces);
         if (hit.dist > 10000.0) {
             hit.mat.brdf.a = 1.;
-            hit.mat.emission = 0.01*vec3(getEnviromentLight(hit.reflectdir).a);
+            hit.mat.emission = vec3(getEnviromentLight(hit.reflectdir).a);
             filt = filt * getEnviromentLight(hit.reflectdir).rgb;
         } else {
           bibi = BRDF(hit, hit.mat, rngState);
@@ -407,7 +418,7 @@ vec3 trace(Line ray, Ball[balls_len] objects, Face[faces_len+1] faces, inout uin
             break;
         }
         vec3 dire = bibi.outdir;
-        ray = Line(hit.pos + 0.01*hit.normal, dire);
+        ray = Line(hit.pos + 0.001*hit.normal, dire);
     }
     
     return throughput;
@@ -443,7 +454,7 @@ Line cam(vec2 uv, inout uint rngState) {
     float FOV_radian = FOV/180*PI;
     float phi = RandomValue(rngState)*2*PI;
     uv += 0.001*vec2(cos(phi), sin(phi));
-    vec3 cam_space = normalize(vec3(uv.x*FOV_radian, uv.y*FOV_radian*aspect, 1.));
+    vec3 cam_space = normalize(vec3(uv.x*FOV_radian*aspect, uv.y*FOV_radian, 1.));
     vec3 pos = cam_pos + ch*view;
     cam_space -= ch/focus_distance;
     return Line(pos, cam_space * view);
@@ -477,5 +488,5 @@ void main() {
   // balls[6] = Ball(vec4(bbs[0].c1.xyz, 1.), balls[0].matpos);
   // balls[7] = Ball(vec4(bbs[0].c2.xyz, 1.), balls[0].matpos);
   // fragColor = vec4(vec3(boxcollide(cam(uv, rngState), bbs[1]))*0.01+colly*0.5, 1.);
-  // fragColor = vec4(texture(emission_tex, balls[0].matpos.xy+uv*0.01).rgb, 1.);
+  // fragColor = vec4(textureGrad(albedo_tex, vec2(balls[0].matpos[0]+vec2(0., 0.)*(balls[0].matpos[1]-balls[0].matpos[0]))+uv*0.001, vec2(0.), vec2(0.)).rgb, 1.);
 }

@@ -2,24 +2,26 @@ import math
 import numpy as np
 import trimesh
 import os
-width, height = 720, 720
+width, height = 1000, 720
 MAX_BALLS = 6
-MAX_FACES = 2048
+MAX_FACES = 1024
 MAX_MATS = 6
 rpp = 100
 show_progress = True
 fps = 24
-length = math.pi*2 # seconds
-start_time = 0
+length = math.pi*2+1 # seconds
+# length = 0
+start_time = 1
 forever = False
 supersample = False
-hide_buildup = 1000000000000
-pause = 0.0
+hide_buildup = 1000000000000000
+pause = 0.001
 lock_fps = False
 focus_distance = 4.0
-focus_strength = 0.00001
-exposure = 1
+focus_strength = 0.0000000001
+exposure = 0.8
 fp = "output.mp4"
+# fp = "output.png"
 seed = np.random.randint(0, 2**32)
 import movement
 movement.spd = 10
@@ -28,7 +30,7 @@ def get_cam(t):
     fov = 90
     return fov, movement.pos, movement.view
 
-texcor = lambda i: [1-1/3+(i % 2048)/3/2048+0.5/2048/3, 1-1/3+(i // 2048)/3/2048+0.5/2048/3, 1-1/3+(i % 2048)/3/2048+0.5/2048/3, 1-1/3+(i // 2048)/3/2048+0.5/2048/3]
+texcor = lambda i: [1-1/6+(i % 1024)/6/1024+0.5/1024/6, 1-1/6+(i // 1024)/6/1024+0.5/1024/6, 1-1/6+(i % 1024)/6/1024+0.5/1024/6, 1-1/6+(i // 1024)/6/1024+0.5/1024/6]
 
 def get_ballslist(t):
     t = t * 2
@@ -128,7 +130,7 @@ def get_facelist_mesh(obj):
         faces = np.append(faces, 1)
     return faces
 def get_environment(t):
-    return np.array([0.6, 0.6, 0.9, 0.2-0.1*math.sin(t)], dtype='f4'), np.array([0.8, 0.8, 1.0, 0.5-0.2*math.sin(t)], dtype='f4'), np.array([0.2, 0.2, 0.2, 0.5-0.5*math.sin(t)], dtype='f4')
+    return np.array([0.6, 0.6, 0.9, 0.1-0.05*math.sin(t)], dtype='f4'), np.array([0.8, 0.8, 1.0, 0.4-0.1*math.sin(t)], dtype='f4'), np.array([0.5, 0.5, 0.5, 0.1-0.05*math.sin(t)], dtype='f4')
 # def get_environment(t):
 #     return np.zeros((3,4), dtype='f4')
 get_facelist_v2(0)
