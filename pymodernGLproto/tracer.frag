@@ -9,9 +9,6 @@ uniform vec3 cam_pos;
 uniform mat3x3 view;
 uniform uint randval;
 uniform uint frameIndex;
-uniform vec4 envpos;
-uniform vec4 envdir;
-uniform vec4 envfloor;
 uniform float aspect;
 uniform float h;
 uniform float t;
@@ -25,12 +22,12 @@ uniform sampler2D displacement_tex;
 uniform sampler2D normal_tex;
 uniform sampler2D albedo_tex;
 
-const int balls_len = 6;
-const int faces_len = 32;
+const int balls_len = 5;
+const int faces_len = 576;
 const int rpp = 1;
 const int MAXBOUNCES = 5;
-const int bbs_len = 2;
-const int bindex_len = 24;
+const int bbs_len = 1;
+const int bindex_len = 576;
 
 const float PI=3.14159265;
 
@@ -112,14 +109,6 @@ float RandomValue(inout uint state)
 }
 
 
-
-vec4 getEnviromentLight(vec3 dir) {
-  if (dir.y > -0.2) {
-    return mix(envpos, envdir, 0.4*dir.y+0.6);
-  } else {
-    return envfloor;
-  }
-}
 
 struct Vert {
   vec3 pos;
@@ -223,6 +212,7 @@ vec3 uvmix(vec2 t){
 }
 
 Material sample_tex(vec2 uv, vec2 dx, vec2 dy){
+  uv -= vec2(0.5)/vec2(h * aspect, h);
   vec4 albedo = vec4(textureGrad(albedo_tex, uv, dx, dy).rgba);
   vec4 fresnel = textureGrad(fresnel_tex, uv, dx, dy).rgba;
   fresnel = vec4(fresnel.rgb, 1.-fresnel.a);
@@ -242,7 +232,7 @@ Material get_uv(mat3x2 posmat, vec3 imgpos, vec2 dx, vec2 dy){
   dy *= posmat[1] - posmat[2];
   return sample_tex(posmat * imgpos, dx, dy);
 }
-Material get_square_uv(mat2x2 posmat, vec2 imgpos, vec2 dx, vec2 dy){
+Material get_rect_uv(mat2x2 posmat, vec2 imgpos, vec2 dx, vec2 dy){
   dx *= posmat[1].x-posmat[0].x;
   dy *= posmat[1].y-posmat[0].y;
 
@@ -251,7 +241,7 @@ Material get_square_uv(mat2x2 posmat, vec2 imgpos, vec2 dx, vec2 dy){
 
 hitInfo getHit(Line newray, Ball[balls_len] objects, Face[faces_len+1] faces) {
     float chosent = 1e29;
-    Ball chosen = Ball(vec4(0.), mat2x2(0.));
+    Ball chosen = balls[balls_len-1];
     float myvert_t = 1e30;
     collision_data intfacecol;
     Face intface = Face(Vert[3](Vert(vec3(0.), vec2(0.)), Vert(vec3(0.), vec2(0.)), Vert(vec3(0.), vec2(0.))), 0.);
@@ -259,7 +249,7 @@ hitInfo getHit(Line newray, Ball[balls_len] objects, Face[faces_len+1] faces) {
         int boxIndex = bindices[bindex_index].x;
         Box box = bbs[boxIndex];
         float ins = boxcollide(newray, box);
-        if(ins > -1000000000000.){
+        if(ins > -0.01){
           Face face = faces[bindices[bindex_index].y];
           if (face.exists == 0) continue;
           collision_data facecol = collide(newray, face);
@@ -272,7 +262,7 @@ hitInfo getHit(Line newray, Ball[balls_len] objects, Face[faces_len+1] faces) {
             }
         }
     }
-    for (int object_index = 0; object_index < balls_len; object_index++){
+    for (int object_index = 0; object_index < balls_len-1; object_index++){
         
         Ball obj = objects[object_index];
         if (obj.pos.w == 0) continue; // radius=0 means not loaded
@@ -292,19 +282,30 @@ hitInfo getHit(Line newray, Ball[balls_len] objects, Face[faces_len+1] faces) {
       vec3 normal = normalize(pos - chosen.pos.xyz);
       vec3 reflectdir = newray.dir - 2*dot(newray.dir, normal) * normal;
       vec3 ta = vec3(normal.z, normal.y, -normal.x);
+      float x;
+      float y;
+      float em;
       vec2 thetaphi = dirToPolar(normal);
-      float x = mod(thetaphi.x*chosen.pos.w, 1.);
-      float y = mod((0.5*PI-thetaphi.y)*chosen.pos.w, 1.);
-      vec2 dx = vec2(1.0 / h / aspect, 0.0);
-      vec2 dy = vec2(0.0, 1.0 / h);
-      Material matty = get_square_uv(chosen.matpos, vec2(x,y), dx, dy);
+      if(chosent>10000.){
+        x = (PI+dirToPolar(newray.dir).x)/(2*PI);
+        y = dirToPolar(newray.dir).y/(PI);
+        em = 0.3;
+      } else {
+        x = mod(thetaphi.x*chosen.pos.w, 1.);
+        y = mod((0.5*PI-thetaphi.y)*chosen.pos.w, 1.);
+        em = 1.0;
+      }
+      vec2 dx = vec2(1.0 / h / aspect * 5., 0.0);
+      vec2 dy = vec2(0.0, 1.0 / h * 5.);
+      Material matty = get_rect_uv(chosen.matpos, vec2(x,y), dx, dy);
+      matty.emission *= em;
       return hitInfo(chosent, pos, normal, newray.dir, reflectdir, matty, ta);
     } else {
       vec3 pos = myvert_t*newray.dir + newray.pos;
       vec3 normal = intfacecol.normal;
       vec3 reflectdir = newray.dir - 2*dot(newray.dir, normal) * normal;
-      vec2 dx = vec2(1.0 / h / aspect, 0.0);
-      vec2 dy = vec2(0.0, 1.0 / h);
+      vec2 dx = vec2(1.0 / h / aspect / 5., 0.0);
+      vec2 dy = vec2(0.0, 1.0 / h / 5.);
       mat3x2 posmat = mat3x2(
         intface.verts[2].uv_coord,
         intface.verts[1].uv_coord,
@@ -405,18 +406,12 @@ vec3 trace(Line ray, Ball[balls_len] objects, Face[faces_len+1] faces, inout uin
     brdf_data bibi = brdf_data(vec3(1.), vec3(1.));
     for (int i = 0; i < MAXBOUNCES; i++) {
         hitInfo hit = getHit(ray, objects, faces);
-        if (hit.dist > 10000.0) {
-            hit.mat.brdf.a = 1.;
-            hit.mat.emission = vec3(getEnviromentLight(hit.reflectdir).a);
-            filt = filt * getEnviromentLight(hit.reflectdir).rgb;
-        } else {
-          bibi = BRDF(hit, hit.mat, rngState);
-          filt = filt * bibi.reflectance;
-        }
+        filt = filt * bibi.reflectance;
         throughput = throughput + filt * hit.mat.emission;
         if (hit.dist > 10000.0) {
             break;
         }
+        bibi = BRDF(hit, hit.mat, rngState);
         vec3 dire = bibi.outdir;
         ray = Line(hit.pos + 0.001*hit.normal, dire);
     }
@@ -488,5 +483,5 @@ void main() {
   // balls[6] = Ball(vec4(bbs[0].c1.xyz, 1.), balls[0].matpos);
   // balls[7] = Ball(vec4(bbs[0].c2.xyz, 1.), balls[0].matpos);
   // fragColor = vec4(vec3(boxcollide(cam(uv, rngState), bbs[1]))*0.01+colly*0.5, 1.);
-  // fragColor = vec4(textureGrad(albedo_tex, vec2(balls[0].matpos[0]+vec2(0., 0.)*(balls[0].matpos[1]-balls[0].matpos[0]))+uv*0.001, vec2(0.), vec2(0.)).rgb, 1.);
+  // fragColor = vec4(textureGrad(albedo_tex, mix(balls[int(t)].matpos[0], balls[int(t)].matpos[1], floor(mod((t*2),2)/2+0.5))+uv*0.5, vec2(0.), vec2(0.)).rgb, 1.);
 }

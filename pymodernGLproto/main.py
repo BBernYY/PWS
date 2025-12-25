@@ -6,7 +6,7 @@ import imageio
 from PIL import Image
 import math
 import copy
-
+from nice_duration import duration_string as durs
 from conf import *
 
 if show_progress:
@@ -70,38 +70,46 @@ pong = ctx.texture((width, height), 4, dtype='f4')
 albedo = Image.open('./textures/Albedo.png')
 albedo_tex = ctx.texture(albedo.size, 4, albedo.tobytes())
 albedo_tex.build_mipmaps()
+albedo_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
 albedo_tex.use(3)
 fresnel = Image.open('./textures/Specular.png')
 fresnel_tex = ctx.texture(fresnel.size, 4, fresnel.tobytes())
 fresnel_tex.build_mipmaps()
+fresnel_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
 fresnel_tex.use(4)
 ao = Image.open('./textures/Occlusion.png')
 ao_tex = ctx.texture(ao.size, 1, ao.tobytes())
 ao_tex.build_mipmaps()
+ao_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
 ao_tex.use(5)
 displacement = Image.open('./textures/Displacement.png')
 displacement_tex = ctx.texture(displacement.size, 1, displacement.tobytes())
 displacement_tex.build_mipmaps()
+displacement_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
 displacement_tex.use(6)
 normal = Image.open('./textures/Normals.png')
 normal_tex = ctx.texture(normal.size, 3, normal.tobytes())
 normal_tex.build_mipmaps()
+normal_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
 normal_tex.use(7)
 emission = Image.open('./textures/Emission.png')
 emission_tex = ctx.texture(emission.size, 3, emission.tobytes())
 emission_tex.build_mipmaps()
+emission_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
 emission_tex.use(8)
 fbo_ping = ctx.framebuffer(ping)
 fbo_pong = ctx.framebuffer(pong)
 isPing = True
 tracer_tex.build_mipmaps()
+tracer_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
 tracer_tex.use(2)
 start = time.time()
 if fp:
-    writer = imageio.get_writer(fp, fps=fps, codec='libx264')
+    writer = imageio.get_writer(fp, fps=time_fps, codec='libx264')
 running = True
 if length == 0:
-    length = 1/fps
+    length = 1/time_fps
+ta = time.time()
 tu = time.time()
 frames_rendered = 0
 while (t < length+start_time or forever) and running:
@@ -122,10 +130,6 @@ while (t < length+start_time or forever) and running:
         safe_uniform("cam_pos", cam_pos)
         safe_uniform("view", view.T.flatten())
         safe_uniform("randval", np.random.randint(0, 2**32))
-        envpos_val, envdir_val, envfloor_val = get_environment(t)
-        safe_uniform("envpos", envpos_val)
-        safe_uniform("envdir", envdir_val)
-        safe_uniform("envfloor", envfloor_val)
         safe_uniform("aspect", width/height)
         safe_uniform("h", height)
         safe_uniform("focus_distance", focus_distance)
@@ -141,23 +145,20 @@ while (t < length+start_time or forever) and running:
             fbo_ping.use()
             accumulator_safe_uniform("accumulated", 1)
             isPing = True
+        dt = 1/render_fps - (time.time()-tu)
         frames_rendered += 1
-        if frames_rendered % 100 == 0:
-            print(f" t = {t:.2f}s, {frameIndex/rpp*100:.0f}% of frame {(t-start_time)*fps:.0f}/{length*fps:.0f}, fps {((((t-start_time)*fps)/(time.time()-start)) if t-start_time > 0 else 0.0):.2f}, {frames_rendered/(t*fps+1):.2f} samples per frame")
-            pass
         frameIndex += 1
-        dt = 1/fps - (time.time()-tu)
-        if frameIndex > rpp:
+        if frameIndex >= rpp and not supersample:
             stop = True
         if dt < 0 and lock_fps:
             stop = True
+        time.sleep(pause)
         accumulator_safe_uniform("frameIndex", frameIndex)
         accumulator_safe_uniform("frame", 2)
         accumulator_program["do_postprocessing"] = stop
         accumulator_program["exposure"] = exposure
         accumulator_vao.render(moderngl.TRIANGLES, vertices=6)
-        time.sleep(pause)
-        dt = 1/fps - (time.time()-tu)
+        dt = 1/render_fps - (time.time()-tu)
         if show_progress and frames_rendered%hide_buildup == 0:
             ctx.copy_framebuffer(ctx.screen, (fbo_ping if not isPing else fbo_pong))
             pygame.display.flip()
@@ -168,15 +169,16 @@ while (t < length+start_time or forever) and running:
                 pygame.display.flip()
             if lock_fps and dt > 0 and not supersample:
                 time.sleep(dt)
+            print(f"t = {t:2f}s\tframe {int((t+1/time_fps-start_time)*time_fps)}/{(int(length*time_fps))}\ttook {int(1000*(time.time()-tu))}ms\tsampled {frameIndex} frames\t {durs(seconds=(time.time()-ta)*(start_time+length-t+1/time_fps)/(t+1/time_fps-start_time))} left")
             break
-    tu = time.time()
-    t += 1/fps
 
     out_fbo = fbo_ping if isPing else fbo_pong
     if fp:
-        if length == 1/fps:
+        if length == 1/time_fps:
             Image.frombytes('RGB', out_fbo.size, out_fbo.read(), 'raw', 'RGB', 0, -1).save(fp)
         else:    
             writer.append_data(np.array(Image.frombytes('RGB', out_fbo.size, out_fbo.read(), 'raw', 'RGB', 0, -1)))
+    tu = time.time()
+    t += 1/time_fps
 if fp:
     writer.close()

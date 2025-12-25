@@ -2,35 +2,36 @@ import math
 import numpy as np
 import trimesh
 import os
-width, height = 1000, 720
+width, height = 720, 720
 MAX_BALLS = 6
 MAX_FACES = 1024
 MAX_MATS = 6
-rpp = 100
+rpp = 1000
 show_progress = True
-fps = 24
-length = math.pi*2+1 # seconds
+length = math.pi*2 # seconds
+time_fps = 60
+render_fps = 1/12
 # length = 0
 start_time = 1
 forever = False
-supersample = False
-hide_buildup = 1000000000000000
+supersample = True
+hide_buildup = 100000000
 pause = 0.001
-lock_fps = False
+lock_fps = True
 focus_distance = 4.0
 focus_strength = 0.0000000001
-exposure = 0.8
+exposure = 0.6
 fp = "output.mp4"
 # fp = "output.png"
 seed = np.random.randint(0, 2**32)
 import movement
 movement.spd = 10
 def get_cam(t):
-    movement.update(1/fps)
+    movement.update(1/time_fps)
     fov = 90
     return fov, movement.pos, movement.view
-
-texcor = lambda i: [1-1/6+(i % 1024)/6/1024+0.5/1024/6, 1-1/6+(i // 1024)/6/1024+0.5/1024/6, 1-1/6+(i % 1024)/6/1024+0.5/1024/6, 1-1/6+(i // 1024)/6/1024+0.5/1024/6]
+s = 1/6/(1024+4*2)
+texcor = lambda i: [(i % 6)/6+4.5*s, (i // 6)/6+4.5*s, (i % 6)/6+1024*s+4.5*s, (i // 6)/6+1024*s+4.5*s]
 
 def get_ballslist(t):
     t = t * 2
@@ -38,35 +39,41 @@ def get_ballslist(t):
         # subject 1
         [
             [3, 1+math.sin(t), 3.0, 1.0],  # x, y, z, radius
-            texcor(0)  # color (r,g,b,a)
+            texcor(4)  # color (r,g,b,a)
         ],
         # subject 2
         [
             [1.0, 1.0+math.sin(t+2*math.pi*0.25), 3.0, 1.0],
-            texcor(1)
+            texcor(5)
         ],
         # subject 3
         [
             [-1.0, 1.0+math.sin(t+2*math.pi*0.5), 3.0, 1.0],
-            texcor(2)
+            texcor(6)
         ],
         # subject 4
         [
             [-3.0, 1.0+math.sin(t+2*math.pi*0.75), 3.0, 1.0],
-            texcor(3)
+            texcor(7)
         ],
         # sun
         [
             [0.0, 8.0, 3.0, 3.0],
-            texcor(4)
+            texcor(8)
         ],
         # ground
         [
             [0.0, -51.0, 0.0, 50.0],
-            texcor(5)
+            texcor(9)
+        ],
+        # skybox
+        [
+            [0.0, 0.0, 0.0, 1.0],
+            [*texcor(10)[:2],*texcor(11)[2:]]
+            # texcor(6)
         ]
     ]
-    objectlist = [objectlist[0], objectlist[3], objectlist[4], objectlist[5]]
+    objectlist = [objectlist[0], objectlist[3], objectlist[4], objectlist[5], objectlist[-1]]
     objects = np.array(objectlist, dtype='f4')
     pad_count = MAX_BALLS - objects.shape[0]
     pad_block = np.zeros((pad_count, 2, 4), dtype='f4')
@@ -96,8 +103,9 @@ def add_mat(arr, id):
     C[:,:,:3] = arr
     C[:,:,3] = B
     return C
-mesh = trimesh.load("objects/brick_cube.obj")
-mesh2 = trimesh.load("objects/metal_cube.obj")
+mesh = trimesh.load("objects/torus_576.obj")
+mesh.apply_scale(0.5)
+mesh2 = trimesh.load("objects/torus_576.obj")
 def get_facelist_v2(t):
     nu = mesh.copy()
     nu.apply_transform(trimesh.transformations.rotation_matrix(t+0.5*math.pi, [1, 0, 0]))
@@ -107,7 +115,7 @@ def get_facelist_v2(t):
     nu2.apply_transform(trimesh.transformations.rotation_matrix(t, [1, 0, 0]))
     nu2.apply_transform(trimesh.transformations.rotation_matrix(t+0.5*math.pi, [0, 1, 0]))
     nu2.apply_translation((0, 2, 2))
-    objs = [nu, nu2]
+    objs = [nu]
     faces = []
     bounds = []
     bindex = []
@@ -129,8 +137,7 @@ def get_facelist_mesh(obj):
         faces = np.append(faces, face)
         faces = np.append(faces, 1)
     return faces
-def get_environment(t):
-    return np.array([0.6, 0.6, 0.9, 0.1-0.05*math.sin(t)], dtype='f4'), np.array([0.8, 0.8, 1.0, 0.4-0.1*math.sin(t)], dtype='f4'), np.array([0.5, 0.5, 0.5, 0.1-0.05*math.sin(t)], dtype='f4')
+# def get_environment(t):
+#     return np.array([0.6, 0.6, 0.9, 0.1-0.05*math.sin(t)], dtype='f4'), np.array([0.8, 0.8, 1.0, 0.4-0.1*math.sin(t)], dtype='f4'), np.array([0.5, 0.5, 0.5, 0.1-0.05*math.sin(t)], dtype='f4')
 # def get_environment(t):
 #     return np.zeros((3,4), dtype='f4')
-get_facelist_v2(0)
