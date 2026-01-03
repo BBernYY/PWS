@@ -1,4 +1,2 @@
 # PWS
-My >80 hour school project on ray/path-tracing (in dutch)
-
-everything WIP
+Een profielwerkstuk over de implementatie van een raytracer. Zie [werkstuk.pdf](werkstuk.pdf)
