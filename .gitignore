@@ -1,4 +1,4 @@
-src/*
+*
 !src/objects/cube.obj
 !src/tracer.frag
 !src/accumulator.frag
