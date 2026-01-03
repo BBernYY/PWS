@@ -1,8 +1,1 @@
-*
-!src/objects/cube.obj
-!src/tracer.frag
-!src/accumulator.frag
-!src/fs_quad.vert
-!src/textures/*
-!*.py
-!src/objects/*
+.gitignore
