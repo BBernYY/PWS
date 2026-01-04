@@ -22,12 +22,12 @@ uniform sampler2D displacement_tex;
 uniform sampler2D normal_tex;
 uniform sampler2D albedo_tex;
 
-const int balls_len = 7;
-const int faces_len = 12;
+const int balls_len = 5;
+const int faces_len = 576;
 const int rpp = 1;
 const int MAXBOUNCES = 5;
 const int bbs_len = 1;
-const int bindex_len = 12;
+const int bindex_len = 576;
 
 const float PI=3.14159265;
 
@@ -289,7 +289,7 @@ hitInfo getHit(Line newray, Ball[balls_len] objects, Face[faces_len+1] faces) {
       if(chosent>10000.){
         x = (PI+dirToPolar(newray.dir).x)/(2*PI);
         y = dirToPolar(newray.dir).y/(PI);
-        em = 0.01;
+        em = 0.0;
       } else {
         x = mod(thetaphi.x*chosen.pos.w, 1.);
         y = mod((0.5*PI-thetaphi.y)*chosen.pos.w, 1.);

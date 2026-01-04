@@ -7,7 +7,7 @@ from PIL import Image
 import math
 import copy
 from nice_duration import duration_string as durs
-from conf_comp import *
+from conf import *
 
 if show_progress:
     pygame.init()
